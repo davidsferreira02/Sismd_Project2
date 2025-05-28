@@ -1,0 +1,23 @@
+# Erlang compiled files
+*.beam
+
+# Erlang crash dumps
+erl_crash.dump
+
+# Erlang distribution files
+.erlang.cookie
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
