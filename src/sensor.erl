@@ -30,7 +30,7 @@ start(Name, Interval, Neighbors) ->
             link(ServerPid),
             ServerPid ! {register, Pid}
     end,
-    io:format("Sensor ~p iniciado.~n", [Name]),
+    io:format("[~p] 🚀 Sensor iniciado com vizinhos: ~p (intervalo: ~pms)~n", [Name, Neighbors, Interval]),
     Pid.
 
 stop(Name) ->
@@ -47,28 +47,34 @@ loop(Name, Interval, Neighbors) ->
     
     case ServerPid of
         undefined ->
+            io:format("[~p] Servidor não encontrado, tentando reenvio através dos vizinhos ~p~n", [Name, Neighbors]),
             case try_relay(Neighbors, {data, Name, self(), Val}) of
-                ok -> io:format("~p reenviou pela rede.~n", [Name]);
-                {error, no_path} -> io:format("~p não conseguiu enviar.~n", [Name])
+                ok -> io:format("[~p] ✓ Dados (valor: ~p) reenviados pela rede com sucesso~n", [Name, Val]);
+                {error, no_path} -> io:format("[~p] ✗ Falha ao reenviar dados (valor: ~p) - nenhum caminho disponível~n", [Name, Val])
             end;
         _ ->
+            io:format("[~p] → [server] Enviando dados diretamente (valor: ~p)~n", [Name, Val]),
             ServerPid ! {data, Name, self(), Val}
     end,
 
     receive
         {sensor_down, DeadPid} ->
-            io:format("~p notificado que ~p caiu.~n", [Name, DeadPid]);
+            io:format("[~p] ⚠ Notificação: sensor ~p caiu~n", [Name, DeadPid]);
         {'EXIT', server, Why} ->
-            io:format("~p detectou server caído: ~p~n", [Name, Why]);
+            io:format("[~p] ⚠ Servidor caiu! Motivo: ~p~n", [Name, Why]);
         {relay, Msg} ->
+            io:format("[~p] Recebido pedido de relay: ~p~n", [Name, Msg]),
             % Try to send to server on local node first, then on server node
             ServerPid2 = find_server(),
             case ServerPid2 of
-                undefined -> io:format("~p cannot relay, server not found~n", [Name]);
-                _ -> ServerPid2 ! Msg
+                undefined -> 
+                    io:format("[~p] ✗ Não é possível fazer relay - servidor não encontrado~n", [Name]);
+                _ -> 
+                    io:format("[~p] → [server] Fazendo relay da mensagem: ~p~n", [Name, Msg]),
+                    ServerPid2 ! Msg
             end;
         stop ->
-            io:format("~p será parado.~n", [Name]),
+            io:format("[~p] ⏹ Parando sensor...~n", [Name]),
             exit(normal)
     after Interval ->
         ok
@@ -80,6 +86,11 @@ try_relay([], _) ->
     {error, no_path};
 try_relay([N|Ns], Msg) ->
     case whereis(N) of
-        undefined -> try_relay(Ns, Msg);
-        NPid      -> NPid ! {relay, Msg}, ok
+        undefined -> 
+            io:format("Vizinho ~p não encontrado, tentando próximo...~n", [N]),
+            try_relay(Ns, Msg);
+        NPid      -> 
+            io:format("→ [~p] Enviando mensagem para relay: ~p~n", [N, Msg]),
+            NPid ! {relay, Msg}, 
+            ok
     end.
