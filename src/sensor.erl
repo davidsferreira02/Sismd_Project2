@@ -49,23 +49,39 @@ stop(Name) ->
         Pid -> Pid ! stop, ok
     end.
 
-% Add a neighbor to an existing sensor
+% Add a neighbor to an existing sensor (bidirectional)
 add_neighbor(SensorName, Neighbor) ->
     case whereis(SensorName) of
         undefined -> {error, sensor_not_found};
         Pid -> 
             Pid ! {add_neighbor, Neighbor},
             io:format("[~p] ➕ Adicionando vizinho: ~p~n", [SensorName, Neighbor]),
+            % Add bidirectional connection - make sure Neighbor also has SensorName as neighbor
+            case find_neighbor(Neighbor) of
+                undefined -> 
+                    io:format("[~p] ⚠️ Não foi possível encontrar sensor ~p para adicionar conexão bidirecional~n", [SensorName, Neighbor]);
+                NeighborPid -> 
+                    NeighborPid ! {add_neighbor_silent, SensorName},
+                    io:format("[~p] ↔️ Conexão bidirecional estabelecida com ~p~n", [SensorName, Neighbor])
+            end,
             ok
     end.
 
-% Remove a neighbor from an existing sensor
+% Remove a neighbor from an existing sensor (bidirectional)
 remove_neighbor(SensorName, Neighbor) ->
     case whereis(SensorName) of
         undefined -> {error, sensor_not_found};
         Pid -> 
             Pid ! {remove_neighbor, Neighbor},
             io:format("[~p] ➖ Removendo vizinho: ~p~n", [SensorName, Neighbor]),
+            % Remove bidirectional connection - make sure Neighbor also removes SensorName as neighbor
+            case find_neighbor(Neighbor) of
+                undefined -> 
+                    io:format("[~p] ⚠️ Não foi possível encontrar sensor ~p para remover conexão bidirecional~n", [SensorName, Neighbor]);
+                NeighborPid -> 
+                    NeighborPid ! {remove_neighbor_silent, SensorName},
+                    io:format("[~p] ↔️ Conexão bidirecional removida com ~p~n", [SensorName, Neighbor])
+            end,
             ok
     end.
 
@@ -133,6 +149,17 @@ loop(Name, Interval, Neighbors) ->
                     io:format("[~p] ✅ Vizinho ~p removido. Novos vizinhos: ~p~n", [Name, Neighbor, NewNeighbors]),
                     NewNeighbors
             end,
+            loop(Name, Interval, UpdatedNeighbors);
+        {add_neighbor_silent, Neighbor} ->
+            % Silent addition (for bidirectional connections without logging)
+            UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
+                true -> Neighbors;
+                false -> [Neighbor | Neighbors]
+            end,
+            loop(Name, Interval, UpdatedNeighbors);
+        {remove_neighbor_silent, Neighbor} ->
+            % Silent removal (for bidirectional connections without logging)
+            UpdatedNeighbors = lists:delete(Neighbor, Neighbors),
             loop(Name, Interval, UpdatedNeighbors);
         {list_neighbors, From} ->
             From ! {neighbors, Neighbors};

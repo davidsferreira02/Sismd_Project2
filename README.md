@@ -1,330 +1,282 @@
-# Erlang Sensor Network Routing System
+# Sistema de Rede de Sensores Distribuída em Erlang
 
-## Project Overview
+## Visão Geral do Projeto
 
-This project implements a distributed sensor network routing system using Erlang. The system consists of sensors that can communicate with a central server either directly or through other sensors, creating a mesh network with automatic failover capabilities.
+Este projeto implementa um sistema distribuído de sensores usando Erlang, onde sensores podem comunicar com um servidor central diretamente ou através de outros sensores numa rede mesh com capacidades de failover automático e mecanismo de cascata.
 
-### Key Features
+### Características Principais
 
-- **Multi-hop Routing**: Sensors can route messages through other sensors to reach the server
-- **Direct Server Connections**: Some sensors can communicate directly with the server
-- **Automatic Failover**: When a sensor fails, the system automatically discovers alternative routes
-- **Data Persistence**: The server stores all sensor data with timestamps and exports to CSV
-- **Network Discovery**: Sensors can discover available alternatives when routes fail
-- **Real-time Monitoring**: The server provides statistics and analysis capabilities
+- **Roteamento Multi-hop**: Sensores podem encaminhar mensagens através de outros sensores para alcançar o servidor
+- **Conexões Diretas ao Servidor**: Alguns sensores comunicam diretamente com o servidor
+- **Failover Automático com Cascata**: Quando um sensor falha, o sistema automaticamente tenta outros vizinhos
+- **Conexões Bidirecionais**: Garantia de que se A é vizinho de B, então B é vizinho de A
+- **Registo em CSV**: O servidor exporta todas as mensagens para um ficheiro CSV
+- **Deteção de Loops**: Sistema previne loops infinitos no encaminhamento de mensagens
 
-## Architecture
+## Arquitetura
 
-### Components
+### Componentes
 
-1. **Server (`server.erl`)**: 
-   - Central data collection point
-   - Stores sensor messages with timestamps
-   - Provides data analysis and export capabilities
-   - Monitors sensor connections and handles failures
+1. **Servidor (`server.erl`)**:
+   - Ponto central de recolha de dados
+   - Regista todas as mensagens dos sensores com timestamps
+   - Exporta dados para ficheiro CSV (`server_output.csv`)
+   - Monitoriza conexões dos sensores
 
 2. **Sensor (`sensor.erl`)**:
-   - Can operate with direct server connection or route through other sensors
-   - Automatically discovers alternative routes when failures occur
-   - Configurable routing paths and connection settings
+   - Pode operar com conexão direta ao servidor ou encaminhar através de outros sensores
+   - Descoberta automática de rotas alternativas quando falhas ocorrem
+   - Envio periódico de dados (a cada 3 segundos)
+   - Gestão dinâmica de vizinhos (adicionar/remover)
 
-### Network Topology
+### Topologia da Rede
 
-The system supports various network topologies:
+O sistema suporta várias topologias:
 
 ```
-Direct Connection:
-Sensor1 ──────► Server
-Sensor4 ──────► Server
+Conexão Direta:
+s1 ──────► server
+s4 ──────► server
 
-Multi-hop Routing:
-Sensor3 ──► Sensor2 ──► Sensor1 ──► Server
+Roteamento Multi-hop:
+s3 ──► s2 ──► s1 ──► server
 
-Mixed Topology:
-Sensor3 ──► Sensor2 ──► Sensor1 ──► Server
-            │           Sensor4 ──► Server
-            └──────────► Server (fallback)
+Topologia Mista com Failover:
+s3 ──► s1 ──► server
+ │     X (falha)
+ └──► s2 ──► server (rota alternativa)
 ```
 
-## Setup Instructions
+## Código - Explicação Detalhada
 
-### Prerequisites
+### Servidor (`server.erl`)
 
-- Erlang/OTP installed on your system
-- Multiple terminal windows for running different nodes
-- macOS environment (commands optimized for macOS)
+O servidor é responsável por:
 
-### Installation
+```erlang
+% Iniciar o servidor
+start() ->
+    init_csv_file(),  % Cria ficheiro CSV com cabeçalho
+    register(server, spawn(fun() -> loop(#{sensors => [], data => []}) end)),
+    log_to_csv("INFO", "SERVER_START", "Server started.").
+```
 
-1. Clone or download the project files to your workspace:
+**Funcionalidades principais:**
+- **Registo de Sensores**: Quando um sensor se conecta, o servidor cria um monitor
+- **Receção de Dados**: Processa mensagens `{data, SensorName, SensorPid, Value}`
+- **Registo CSV**: Cada evento é gravado em `server_output.csv` com timestamp
+- **Gestão de Falhas**: Deteta quando sensores falham e notifica outros sensores
+
+### Sensor (`sensor.erl`)
+
+Cada sensor tem as seguintes capacidades:
+
+```erlang
+% Iniciar um sensor com lista de vizinhos
+start(Name, Neighbors) ->
+    Pid = spawn(fun() -> loop(Name, 3000, Neighbors) end),
+    register(Name, Pid).
+```
+
+**Funcionalidades principais:**
+
+1. **Descoberta do Servidor**: 
+   ```erlang
+   find_server(Name, Neighbors) ->
+       HasDirectServerConnection = lists:member(server, Neighbors),
+       % Se 'server' está na lista de vizinhos, tenta conexão direta
    ```
-   /Users/davidferreira/Universidade/Isep/1Ano/2Semestre/Sismd/Project2/
+
+2. **Envio de Dados**:
+   - Se tem conexão direta: envia diretamente ao servidor
+   - Se não tem: usa mecanismo de relay através dos vizinhos
+
+3. **Mecanismo de Relay com Cascata**:
+   ```erlang
+   try_relay_all([N|Ns], Msg, FailedNeighbors) ->
+       case find_neighbor(N) of
+           undefined -> 
+               % Tenta próximo vizinho
+               try_relay_all(Ns, Msg, [N|FailedNeighbors]);
+           NPid -> 
+               % Envia para vizinho disponível
+               NPid ! {relay, Msg}, ok
+       end.
    ```
 
-2. Ensure you have the following files:
-   - `server.erl` - Server implementation
-   - `sensor.erl` - Sensor implementation
-   - `quick_test.txt` - Testing instructions
-   - `test_failure_recovery.txt` - Failure recovery tests
+4. **Gestão Bidirecional de Vizinhos**:
+   ```erlang
+   add_neighbor(SensorName, Neighbor) ->
+       % Adiciona Neighbor como vizinho de SensorName
+       % E automaticamente adiciona SensorName como vizinho de Neighbor
+   ```
 
-## Testing Guide
+5. **Deteção de Loops**:
+   ```erlang
+   handle_relay_with_path(Name, Neighbors, Msg, Path) ->
+       case lists:member(Name, Path) of
+           true -> % Loop detectado, para o relay
+           false -> % Continua o relay adicionando Name ao path
+       end.
+   ```
 
-### Initial Cleanup
+## Como Executar o Sistema
 
-Before starting any test, clean up any existing Erlang processes:
+### Pré-requisitos
+
+- Erlang/OTP instalado
+- Múltiplas janelas de terminal
+- macOS (comandos otimizados para macOS)
+
+### Passo 1: Limpeza Inicial
 
 ```bash
-pkill -f erl
+pkill -f erl    # Mata todos os processos Erlang
 ```
 
-### Basic Setup
-
-#### 1. Start the Server (Terminal 1)
+### Passo 2: Iniciar o Servidor (Terminal 1)
 
 ```bash
-erl -sname server_node
+cd /Users/davidferreira/Universidade/Isep/1Ano/2Semestre/Sismd/Project2/src
+erl -sname server
 ```
 
-In the Erlang shell:
+No shell Erlang:
 ```erlang
 c(server).
-server:start(my_server).
+server:start().
 ```
 
-#### 2. Start Sensor 1 - Direct Server Connection (Terminal 2)
+### Passo 3: Iniciar Sensores
 
+#### Terminal 2 - Sensor s1 (com conexão direta ao servidor):
 ```bash
-erl -sname sensor1_node
+erl -sname s1
 ```
-
-In the Erlang shell:
 ```erlang
 c(sensor).
-sensor:start(sensor1).
-sensor:add_remote('server_node@MacBook-Pro-de-David-2').
-sensor:set_direct_server_connection(sensor1, true).
+sensor:start(s1, [server]).
 ```
 
-#### 3. Start Sensor 2 - Routes via Sensor 1 (Terminal 3)
-
+#### Terminal 3 - Sensor s2 (sem conexão direta):
 ```bash
-erl -sname sensor2_node
+erl -sname s2
 ```
-
-In the Erlang shell:
 ```erlang
 c(sensor).
-sensor:start(sensor2).
-sensor:add_remote('sensor1_node@MacBook-Pro-de-David-2').
-sensor:set_next_hop(sensor2, sensor1, 'sensor1_node@MacBook-Pro-de-David-2').
+sensor:start(s2, []).
 ```
 
-#### 4. Start Sensor 3 - Routes via Sensor 2 (Terminal 4)
-
+#### Terminal 4 - Sensor s3 (conhece s1 e s2):
 ```bash
-erl -sname sensor3_node
+erl -sname s3
 ```
-
-In the Erlang shell:
 ```erlang
 c(sensor).
-sensor:start(sensor3).
-sensor:add_remote('sensor2_node@MacBook-Pro-de-David-2').
-sensor:set_next_hop(sensor3, sensor2, 'sensor2_node@MacBook-Pro-de-David-2').
+sensor:start(s3, [s2, s1]).
 ```
 
-#### 5. Start Sensor 4 - Alternative Direct Connection (Terminal 5)
-
+#### Terminal 5 - Sensor s4 (inicialmente sem vizinhos):
 ```bash
-erl -sname sensor4_node
+erl -sname s4
 ```
-
-In the Erlang shell:
 ```erlang
 c(sensor).
-sensor:start(sensor4).
-sensor:add_remote('server_node@MacBook-Pro-de-David-2').
-sensor:set_direct_server_connection(sensor4, true).
+sensor:start(s4, []).
 ```
 
-**Note**: Replace `MacBook-Pro-de-David-2` with your actual machine hostname. You can find it by running `hostname` in your terminal.
+### Passo 4: Gestão Dinâmica de Vizinhos
 
-### Test Scenarios
-
-#### Test 1: Two-Hop Routing (sensor2 → sensor1 → server)
-
-In sensor2 terminal:
+Adicionar vizinhos dinamicamente:
 ```erlang
-sensor:send_msg_via(sensor2, sensor1, 'sensor1_node@MacBook-Pro-de-David-2', my_server, 'server_node@MacBook-Pro-de-David-2', "Temperature 25C").
+% s3 adiciona s1 como vizinho (conexão bidirecional automática)
+sensor:add_neighbor(s3, s1).
+
+% s4 adiciona s2 como vizinho
+sensor:add_neighbor(s4, s2).
+
+% Listar vizinhos de um sensor
+sensor:list_neighbors(s3).
+
+% Remover vizinho
+sensor:remove_neighbor(s3, s1).
 ```
 
-**Expected Output**:
-```
-[INIT] Sensor sensor2 initiating message via sensor1@sensor1_node@MacBook-Pro-de-David-2 to server: Temperature 25C
-[ROUTING] Sensor sensor2 routing message via sensor1@sensor1_node@MacBook-Pro-de-David-2 to server: Temperature 25C
-[RELAY] Sensor sensor1 relaying message from sensor2 to server: Temperature 25C (direct connection: true)
-[RELAY-ACK] Sensor sensor1 received response from server, forwarding to sensor2
-Server receives: "sensor1: Temperature 25C (relayed from sensor2)"
-```
+## Cenários de Teste
 
-#### Test 2: Three-Hop Routing (sensor3 → sensor2 → sensor1 → server)
+### Teste 1: Funcionamento Normal
 
-In sensor3 terminal:
-```erlang
-sensor:send_msg_via(sensor3, sensor2, 'sensor2_node@MacBook-Pro-de-David-2', my_server, 'server_node@MacBook-Pro-de-David-2', "Humidity 65%").
-```
+Com a configuração:
+- s1 → servidor (direto)
+- s3 → s2 → s1 → servidor
 
-**Expected Output**:
+**Resultado esperado**:
 ```
-[INIT] Sensor sensor3 initiating message via sensor2@sensor2_node@MacBook-Pro-de-David-2 to server: Humidity 65%
-[ROUTING] Sensor sensor3 routing message via sensor2@sensor2_node@MacBook-Pro-de-David-2 to server: Humidity 65%
-[FORWARD] Sensor sensor2 forwarding message from sensor3 via sensor1@sensor1_node@MacBook-Pro-de-David-2 to server: Humidity 65% (direct connection: false)
-[RELAY] Sensor sensor1 relaying message from sensor3 to server: Humidity 65% (direct connection: true)
-[RELAY-ACK] Sensor sensor1 received response from server, forwarding to sensor3
-Server receives: "sensor1: Humidity 65% (relayed from sensor3)"
+[s3] Servidor não encontrado, tentando reenvio através dos vizinhos [s2,s1]
+✅ Vizinho s2 encontrado no nó 's2@MacBook-Pro-de-David-2'
+📤 → [s2] Enviando mensagem para relay: {data,s3,<0.97.0>,87}
+[s3] ✓ Dados (valor: 87) reenviados pela rede com sucesso
 ```
 
-#### Test 3: Failure Recovery
+### Teste 2: Failover Automático
 
-**Step 1**: Simulate sensor1 failure in sensor1 terminal:
-```erlang
-sensor:stop_sensor(sensor1).
+1. s3 está conectado a s1 e s2
+2. s2 falha (fechar terminal)
+3. s3 automaticamente usa s1
+
+**Resultado esperado**:
+```
+⚠️ Erro RPC ao contactar nó 's2@MacBook-Pro-de-David-2': timeout
+⚠️ Vizinho s2 não encontrado, tentando próximo...
+✅ Vizinho s1 encontrado no nó 's1@MacBook-Pro-de-David-2'
+📤 → [s1] Enviando mensagem para relay: {data,s3,<0.97.0>,13}
+[s3] ✓ Dados (valor: 13) reenviados pela rede com sucesso
 ```
 
-**Step 2**: Test automatic recovery in sensor3 terminal:
-```erlang
-sensor:send_msg_via(sensor3, sensor2, 'sensor2_node@MacBook-Pro-de-David-2', my_server, 'server_node@MacBook-Pro-de-David-2', "Pressure 1013 hPa").
+### Teste 3: Isolamento Completo
+
+Se s3 perde todos os vizinhos:
+```
+[s3] ✗ Falha ao reenviar dados (valor: 42) - nenhum caminho disponível
 ```
 
-**Expected Output**:
-```
-[STOP] Sensor sensor1 exiting...
-[INIT] Sensor sensor3 initiating message via sensor2@sensor2_node@MacBook-Pro-de-David-2 to server: Pressure 1013 hPa
-[ROUTING] Sensor sensor3 routing message via sensor2@sensor2_node@MacBook-Pro-de-David-2 to server: Pressure 1013 hPa
-[FAILURE] Next hop sensor1@sensor1_node@MacBook-Pro-de-David-2 failed, discovering alternative sensors...
-[DISCOVERY] Sensor sensor2 scanning X nodes for alternatives...
-[DISCOVERY] Checking node sensor4_node@MacBook-Pro-de-David-2 for available sensors...
-[DISCOVERY] Sensor sensor2 found alternative sensor4@sensor4_node@MacBook-Pro-de-David-2 with direct connection
-[RECOVERY] Sensor sensor2 using alternative sensor sensor4@sensor4_node@MacBook-Pro-de-David-2 after node failure
-```
+## Ficheiros Gerados
 
-### Data Analysis and Verification
+- **`server_output.csv`**: Registo de todas as atividades do servidor
+  ```csv
+  Timestamp,Type,Category,Message
+  "2025-05-31 14:30:15","INFO","SERVER_START","Server started."
+  "2025-05-31 14:30:20","DATA","SENSOR_DATA","server recebeu do Sensor s1 <0.97.0>: 45"
+  ```
 
-#### View Server Data
+## API de Funções
 
-In the server terminal:
-```erlang
-server:demo_analysis(my_server).
-```
+### Servidor
+- `server:start()` - Inicia o servidor
+- `log_to_csv(Type, Category, Message)` - Regista evento no CSV
 
-This will display:
-- Total number of stored messages
-- Statistics for each active sensor
-- Message frequency analysis
-- Export data to `sensor_export.csv`
+### Sensor
+- `sensor:start(Name, Neighbors)` - Inicia sensor com lista de vizinhos
+- `sensor:stop(Name)` - Para um sensor
+- `sensor:add_neighbor(SensorName, Neighbor)` - Adiciona vizinho (bidirecional)
+- `sensor:remove_neighbor(SensorName, Neighbor)` - Remove vizinho (bidirecional)
+- `sensor:list_neighbors(SensorName)` - Lista vizinhos atuais
 
-#### Manual Data Queries
+## Características Avançadas
 
-Get all data:
-```erlang
-AllData = server:get_all_data(whereis(my_server)).
-```
+### Conexões Bidirecionais Automáticas
+Quando executa `sensor:add_neighbor(s3, s1)`:
+- s1 é adicionado à lista de vizinhos de s3
+- s3 é automaticamente adicionado à lista de vizinhos de s1
 
-Get statistics for a specific sensor:
-```erlang
-Stats = server:get_statistics(whereis(my_server), sensor1).
-```
+### Deteção de Loops
+O sistema previne loops infinitos mantendo um registo do caminho percorrido por cada mensagem.
 
-### Files Generated
+### Registo Completo
+Todas as atividades são registadas no CSV:
+- Início/paragem de sensores
+- Dados recebidos
+- Falhas de conexão
+- Eventos de relay
 
-After testing, the following files will be created:
-- `sensor_data.dat` - Binary data storage
-- `sensor_export.csv` - CSV export of all sensor data
-
-## API Reference
-
-### Server Functions
-
-- `server:start(ServerName)` - Start the server process
-- `server:demo_analysis(ServerName)` - Run data analysis and export
-- `server:get_all_data(ServerPid)` - Get all stored data
-- `server:get_statistics(ServerPid, SensorName)` - Get sensor statistics
-
-### Sensor Functions
-
-- `sensor:start(SensorName)` - Start a sensor process
-- `sensor:add_remote(RemoteNode)` - Connect to a remote node
-- `sensor:set_direct_server_connection(Sensor, Boolean)` - Configure direct server access
-- `sensor:set_next_hop(Sensor, NextSensor, NextNode)` - Configure routing path
-- `sensor:send_msg_via(Sensor, ViaSensor, ViaNode, Server, ServerNode, Message)` - Send message via another sensor
-- `sensor:stop_sensor(Sensor)` - Stop a sensor process
-- `sensor:discover_sensors(Sensor)` - Discover available sensors
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Node Connection Problems**:
-   - Ensure all nodes can ping each other
-   - Check hostname resolution (`hostname` command)
-   - Verify firewall settings
-
-2. **Sensor Not Found**:
-   - Ensure sensor processes are started and registered
-   - Check node names match exactly
-   - Verify network connectivity
-
-3. **Message Routing Failures**:
-   - Check sensor configuration (direct connection vs. routing)
-   - Verify next hop sensors are available
-   - Ensure proper node naming
-
-### Debug Commands
-
-Check registered processes:
-```erlang
-registered().
-```
-
-Check connected nodes:
-```erlang
-nodes().
-```
-
-Ping a remote node:
-```erlang
-net_adm:ping('node_name@hostname').
-```
-
-Check process status:
-```erlang
-whereis(sensor_name).
-```
-
-## Advanced Features
-
-### Automatic Discovery
-
-The system includes intelligent sensor discovery that:
-- Scans all connected nodes for available sensors
-- Identifies sensors with direct server connections
-- Automatically updates routing configuration when failures occur
-- Provides fallback mechanisms for network resilience
-
-### Data Persistence
-
-The server automatically:
-- Saves data every 10 messages
-- Loads existing data on startup
-- Exports data to CSV format
-- Maintains message timestamps and source tracking
-
-### Monitoring and Analytics
-
-Built-in analysis features:
-- Message frequency calculation
-- Sensor activity statistics
-- Connection status monitoring
-- Historical data analysis
-
-This system demonstrates key concepts in distributed systems including fault tolerance, automatic discovery, and multi-hop communication in an Erlang environment.
+Este sistema demonstra conceitos fundamentais de sistemas distribuídos incluindo tolerância a falhas, descoberta automática, e comunicação multi-hop em ambiente Erlang.
