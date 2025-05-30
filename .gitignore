@@ -25,3 +25,5 @@ Thumbs.db
 *.txt
 *.csv
 *.pdf
+intro.erl
+mobilecall.erl
