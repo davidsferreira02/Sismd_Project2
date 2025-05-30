@@ -4,24 +4,32 @@
 -export([start/3, stop/1]).
 
 % Helper function to find server on local or remote node
-find_server() ->
-    case whereis(server) of
-        undefined ->
-            % Try to find server on the 'server' node
-            case rpc:call('server@MacBook-Pro-de-David-2', erlang, whereis, [server]) of
-                {badrpc, _} -> undefined;
-                undefined -> undefined;
-                RemoteServerPid -> RemoteServerPid
+% Only sensors with direct server connection (like s1) should find server directly
+find_server(Name, Neighbors) ->
+    HasDirectServerConnection = lists:member(server, Neighbors),
+    case HasDirectServerConnection of
+        true ->
+            case whereis(server) of
+                undefined ->
+                    % Try to find server on the 'server' node
+                    case rpc:call('server@MacBook-Pro-de-David-2', erlang, whereis, [server]) of
+                        {badrpc, _} -> undefined;
+                        undefined -> undefined;
+                        RemoteServerPid -> RemoteServerPid
+                    end;
+                LocalServerPid -> LocalServerPid
             end;
-        LocalServerPid -> LocalServerPid
+        false ->
+            io:format("[~p] 🚫 Não tem conexão direta com servidor, deve usar relay através de ~p~n", [Name, Neighbors]),
+            undefined
     end.
 
 start(Name, Interval, Neighbors) ->
     process_flag(trap_exit, true),
     Pid = spawn(fun() -> loop(Name, Interval, Neighbors) end),
     register(Name, Pid),
-    % Try to find server on local node first, then on server node
-    ServerPid = find_server(),
+    % Try to find server only if this sensor has direct connection
+    ServerPid = find_server(Name, Neighbors),
     
     case ServerPid of
         undefined ->
@@ -42,8 +50,8 @@ stop(Name) ->
 loop(Name, Interval, Neighbors) ->
     Val = rand:uniform(100),
     
-    % Try to find server on local node first, then on server node
-    ServerPid = find_server(),
+    % Try to find server only if this sensor has direct connection
+    ServerPid = find_server(Name, Neighbors),
     
     case ServerPid of
         undefined ->
@@ -63,14 +71,15 @@ loop(Name, Interval, Neighbors) ->
         {'EXIT', server, Why} ->
             io:format("[~p] ⚠ Servidor caiu! Motivo: ~p~n", [Name, Why]);
         {relay, Msg} ->
-            io:format("[~p] Recebido pedido de relay: ~p~n", [Name, Msg]),
-            % Try to send to server on local node first, then on server node
-            ServerPid2 = find_server(),
+            io:format("[~p] 📨 Recebido pedido de relay: ~p~n", [Name, Msg]),
+            % Try to send to server only if this sensor has direct connection
+            ServerPid2 = find_server(Name, Neighbors),
             case ServerPid2 of
                 undefined -> 
-                    io:format("[~p] ✗ Não é possível fazer relay - servidor não encontrado~n", [Name]);
+                    io:format("[~p] ↗️ Não tenho conexão direta, reenviando para vizinhos ~p~n", [Name, Neighbors]),
+                    try_relay(Neighbors, Msg);
                 _ -> 
-                    io:format("[~p] → [server] Fazendo relay da mensagem: ~p~n", [Name, Msg]),
+                    io:format("[~p] → [server] 🔄 Fazendo relay da mensagem: ~p~n", [Name, Msg]),
                     ServerPid2 ! Msg
             end;
         stop ->
@@ -82,15 +91,38 @@ loop(Name, Interval, Neighbors) ->
 
     loop(Name, Interval, Neighbors).
 
+% Find a neighbor process, checking both local and remote nodes
+find_neighbor(NeighborName) ->
+    % First try local node
+    case whereis(NeighborName) of
+        undefined ->
+            % Try to find on remote node with same name as the neighbor
+            NodeName = list_to_atom(atom_to_list(NeighborName) ++ "@MacBook-Pro-de-David-2"),
+            case rpc:call(NodeName, erlang, whereis, [NeighborName]) of
+                {badrpc, Reason} -> 
+                    io:format("⚠️ Erro RPC ao contactar nó ~p: ~p~n", [NodeName, Reason]),
+                    undefined;
+                undefined -> 
+                    io:format("⚠️ Vizinho ~p não encontrado no nó ~p~n", [NeighborName, NodeName]),
+                    undefined;
+                RemotePid -> 
+                    io:format("✅ Vizinho ~p encontrado no nó ~p~n", [NeighborName, NodeName]),
+                    RemotePid
+            end;
+        LocalPid -> 
+            io:format("✅ Vizinho ~p encontrado localmente~n", [NeighborName]),
+            LocalPid
+    end.
+
 try_relay([], _) ->
     {error, no_path};
 try_relay([N|Ns], Msg) ->
-    case whereis(N) of
+    case find_neighbor(N) of
         undefined -> 
-            io:format("Vizinho ~p não encontrado, tentando próximo...~n", [N]),
+            io:format("⚠️ Vizinho ~p não encontrado, tentando próximo...~n", [N]),
             try_relay(Ns, Msg);
         NPid      -> 
-            io:format("→ [~p] Enviando mensagem para relay: ~p~n", [N, Msg]),
+            io:format("📤 → [~p] Enviando mensagem para relay: ~p~n", [N, Msg]),
             NPid ! {relay, Msg}, 
             ok
     end.
