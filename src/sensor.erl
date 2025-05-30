@@ -1,7 +1,10 @@
 %% sensor.erl
 %% Processo sensor que envia leituras periodicamente e faz reencaminhamento se necessário.
 -module(sensor).
--export([start/3, stop/1]).
+-export([start/2, stop/1]).
+
+% Constante para o intervalo de envio (3 segundos)
+-define(INTERVAL, 3000).
 
 % Helper function to find server on local or remote node
 % Only sensors with direct server connection (like s1) should find server directly
@@ -24,9 +27,9 @@ find_server(Name, Neighbors) ->
             undefined
     end.
 
-start(Name, Interval, Neighbors) ->
+start(Name, Neighbors) ->
     process_flag(trap_exit, true),
-    Pid = spawn(fun() -> loop(Name, Interval, Neighbors) end),
+    Pid = spawn(fun() -> loop(Name, ?INTERVAL, Neighbors) end),
     register(Name, Pid),
     % Try to find server only if this sensor has direct connection
     ServerPid = find_server(Name, Neighbors),
@@ -38,7 +41,7 @@ start(Name, Interval, Neighbors) ->
             link(ServerPid),
             ServerPid ! {register, Pid}
     end,
-    io:format("[~p] 🚀 Sensor iniciado com vizinhos: ~p (intervalo: ~pms)~n", [Name, Neighbors, Interval]),
+    io:format("[~p] 🚀 Sensor iniciado com vizinhos: ~p (intervalo: ~pms)~n", [Name, Neighbors, ?INTERVAL]),
     Pid.
 
 stop(Name) ->
