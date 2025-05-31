@@ -1,0 +1,39 @@
+pkill -f erl    
+# Terminal 1:
+erl -sname server
+     c(server).
+     server:start().
+
+
+# Terminal 2 (s1, ligado diretamente ao server):
+erl -sname s1
+     c(sensor).
+     sensor:start(s1, [server]).
+
+
+# Terminal 3 (s2, só conhece s1):
+erl -sname s2
+     c(sensor).
+     sensor:start(s2, [server]).
+
+
+# Terminal 4 (s3, malha com s1 e s2):
+erl -sname s3
+     c(sensor).
+     sensor:start(s3, [s2,s1]).
+
+
+# Terminal 5 (s4, malha com s1 e s2):
+erl -sname s4
+     c(sensor).
+     sensor:start(s4, [s1]).
+
+
+# Terminal 6 (s5, malha com s1 e s2):
+erl -sname s5
+     c(sensor).
+     sensor:start(s5, [s3,s4]).
+
+
+
+sensor:stop(s3).     

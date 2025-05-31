@@ -22,7 +22,7 @@ erl_crash.dump
 ehthumbs.db
 Thumbs.db
 
-*.txt
+
 *.csv
 *.pdf
 intro.erl
