@@ -40,6 +40,10 @@ start(Name, Neighbors) ->
             link(ServerPid),
             ServerPid ! {register, Pid}
     end,
+    
+    % Start the timer for periodic data sending
+    Pid ! start_timer,
+    
     io:format("[~p] 🚀 Sensor iniciado com vizinhos: ~p (intervalo: ~pms)~n", [Name, Neighbors, ?INTERVAL]),
     Pid.
 
@@ -98,7 +102,8 @@ list_neighbors(SensorName) ->
             end
     end.
 
-loop(Name, Interval, Neighbors) ->
+% Send sensor data to server or relay through neighbors
+send_sensor_data(Name, Neighbors) ->
     Val = rand:uniform(100),
     
     % Try to find server only if this sensor has direct connection
@@ -115,19 +120,34 @@ loop(Name, Interval, Neighbors) ->
         _ ->
             io:format("[~p] → [server] Enviando dados diretamente (valor: ~p)~n", [Name, Val]),
             ServerPid ! {data, Name, self(), Val}
-    end,
+    end.
 
+loop(Name, Interval, Neighbors) ->
     receive
+        start_timer ->
+            % Send first data immediately and start timer
+            send_sensor_data(Name, Neighbors),
+            erlang:send_after(Interval, self(), send_data),
+            loop(Name, Interval, Neighbors);
+        send_data ->
+            % Send periodic data and restart timer
+            send_sensor_data(Name, Neighbors),
+            erlang:send_after(Interval, self(), send_data),
+            loop(Name, Interval, Neighbors);
         {sensor_down, DeadPid} ->
-            io:format("[~p] ⚠ Notificação: sensor ~p caiu~n", [Name, DeadPid]);
+            io:format("[~p] ⚠ Notificação: sensor ~p caiu~n", [Name, DeadPid]),
+            loop(Name, Interval, Neighbors);
         {'EXIT', server, Why} ->
-            io:format("[~p] ⚠ Servidor caiu! Motivo: ~p~n", [Name, Why]);
+            io:format("[~p] ⚠ Servidor caiu! Motivo: ~p~n", [Name, Why]),
+            loop(Name, Interval, Neighbors);
         {relay, Msg} ->
             io:format("[~p] 📨 Recebido pedido de relay: ~p~n", [Name, Msg]),
-            handle_relay(Name, Neighbors, Msg);
+            handle_relay(Name, Neighbors, Msg),
+            loop(Name, Interval, Neighbors);
         {relay_with_path, Msg, Path} ->
             io:format("[~p] 📨 Recebido pedido de relay com caminho ~p: ~p~n", [Name, Path, Msg]),
-            handle_relay_with_path(Name, Neighbors, Msg, Path);
+            handle_relay_with_path(Name, Neighbors, Msg, Path),
+            loop(Name, Interval, Neighbors);
         {add_neighbor, Neighbor} ->
             UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
                 true -> 
@@ -162,15 +182,12 @@ loop(Name, Interval, Neighbors) ->
             UpdatedNeighbors = lists:delete(Neighbor, Neighbors),
             loop(Name, Interval, UpdatedNeighbors);
         {list_neighbors, From} ->
-            From ! {neighbors, Neighbors};
+            From ! {neighbors, Neighbors},
+            loop(Name, Interval, Neighbors);
         stop ->
             io:format("[~p] ⏹ Parando sensor...~n", [Name]),
             exit(normal)
-    after Interval ->
-        ok
-    end,
-
-    loop(Name, Interval, Neighbors).
+    end.
 
 % Find a neighbor process, checking both local and remote nodes
 find_neighbor(NeighborName) ->
