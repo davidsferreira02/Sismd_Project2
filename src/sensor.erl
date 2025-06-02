@@ -28,7 +28,7 @@ find_server(Name, Neighbors) ->
 
 start(Name, Neighbors) ->
     process_flag(trap_exit, true),
-    Pid = spawn(fun() -> loop(Name, ?INTERVAL, Neighbors) end),
+    Pid = spawn(fun() -> loop(Name, ?INTERVAL, Neighbors, []) end),  % Adicionar lista de quem me conhece
     register(Name, Pid),
     % Try to find server only if this sensor has direct connection
     ServerPid = find_server(Name, Neighbors),
@@ -41,6 +41,9 @@ start(Name, Neighbors) ->
             ServerPid ! {register, Pid}
     end,
     
+    % Notificar vizinhos que este sensor existe
+    notify_neighbors_of_birth(Name, Neighbors),
+    
     % Start the timer for periodic data sending
     Pid ! start_timer,
     
@@ -50,7 +53,10 @@ start(Name, Neighbors) ->
 stop(Name) ->
     case whereis(Name) of
         undefined -> {error, not_found};
-        Pid -> Pid ! stop, ok
+        Pid -> 
+            % Notificar vizinhos antes de parar
+            Pid ! {notify_death_and_stop},
+            ok
     end.
 
 % Add a neighbor to an existing sensor (bidirectional)
@@ -102,6 +108,32 @@ list_neighbors(SensorName) ->
             end
     end.
 
+% Notify all neighbors that this sensor is dying
+notify_neighbors_of_death(Name, Neighbors) ->
+    io:format("[~p] 💀 Notificando vizinhos ~p que vou morrer...~n", [Name, Neighbors]),
+    lists:foreach(fun(Neighbor) ->
+        case find_neighbor(Neighbor) of
+            undefined -> 
+                io:format("[~p] ⚠️ Não foi possível encontrar vizinho ~p para notificar morte~n", [Name, Neighbor]);
+            NeighborPid -> 
+                io:format("[~p] → [~p] Enviando notificação de morte~n", [Name, Neighbor]),
+                NeighborPid ! {sensor_died, Name}
+        end
+    end, Neighbors).
+
+% Notify all neighbors that this sensor was born
+notify_neighbors_of_birth(Name, Neighbors) ->
+    io:format("[~p] 🐣 Notificando vizinhos ~p que nasci...~n", [Name, Neighbors]),
+    lists:foreach(fun(Neighbor) ->
+        case find_neighbor(Neighbor) of
+            undefined -> 
+                io:format("[~p] ⚠️ Não foi possível encontrar vizinho ~p para notificar nascimento~n", [Name, Neighbor]);
+            NeighborPid -> 
+                io:format("[~p] → [~p] Enviando notificação de nascimento~n", [Name, Neighbor]),
+                NeighborPid ! {sensor_born, Name}
+        end
+    end, Neighbors).
+
 % Send sensor data to server or relay through neighbors
 send_sensor_data(Name, Neighbors) ->
     Val = rand:uniform(100),
@@ -122,32 +154,32 @@ send_sensor_data(Name, Neighbors) ->
             ServerPid ! {data, Name, self(), Val}
     end.
 
-loop(Name, Interval, Neighbors) ->
+loop(Name, Interval, Neighbors, KnownBy) ->
     receive
         start_timer ->
             % Send first data immediately and start timer
             send_sensor_data(Name, Neighbors),
             erlang:send_after(Interval, self(), send_data),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         send_data ->
             % Send periodic data and restart timer
             send_sensor_data(Name, Neighbors),
             erlang:send_after(Interval, self(), send_data),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         {sensor_down, DeadPid} ->
             io:format("[~p] ⚠ Notificação: sensor ~p caiu~n", [Name, DeadPid]),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         {'EXIT', server, Why} ->
             io:format("[~p] ⚠ Servidor caiu! Motivo: ~p~n", [Name, Why]),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         {relay, Msg} ->
             io:format("[~p] 📨 Recebido pedido de relay: ~p~n", [Name, Msg]),
             handle_relay(Name, Neighbors, Msg),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         {relay_with_path, Msg, Path} ->
             io:format("[~p] 📨 Recebido pedido de relay com caminho ~p: ~p~n", [Name, Path, Msg]),
             handle_relay_with_path(Name, Neighbors, Msg, Path),
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
         {add_neighbor, Neighbor} ->
             UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
                 true -> 
@@ -158,7 +190,7 @@ loop(Name, Interval, Neighbors) ->
                     io:format("[~p] ✅ Vizinho ~p adicionado. Novos vizinhos: ~p~n", [Name, Neighbor, NewNeighbors]),
                     NewNeighbors
             end,
-            loop(Name, Interval, UpdatedNeighbors);
+            loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {remove_neighbor, Neighbor} ->
             UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
                 false -> 
@@ -169,21 +201,42 @@ loop(Name, Interval, Neighbors) ->
                     io:format("[~p] ✅ Vizinho ~p removido. Novos vizinhos: ~p~n", [Name, Neighbor, NewNeighbors]),
                     NewNeighbors
             end,
-            loop(Name, Interval, UpdatedNeighbors);
+            loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {add_neighbor_silent, Neighbor} ->
             % Silent addition (for bidirectional connections without logging)
             UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
                 true -> Neighbors;
                 false -> [Neighbor | Neighbors]
             end,
-            loop(Name, Interval, UpdatedNeighbors);
+            loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {remove_neighbor_silent, Neighbor} ->
             % Silent removal (for bidirectional connections without logging)
             UpdatedNeighbors = lists:delete(Neighbor, Neighbors),
-            loop(Name, Interval, UpdatedNeighbors);
+            loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {list_neighbors, From} ->
             From ! {neighbors, Neighbors},
-            loop(Name, Interval, Neighbors);
+            loop(Name, Interval, Neighbors, KnownBy);
+        {sensor_born, NewSensor} ->
+            io:format("[~p] 🐣 Vizinho ~p nasceu, adicionando à lista de quem me conhece~n", [Name, NewSensor]),
+            UpdatedKnownBy = case lists:member(NewSensor, KnownBy) of
+                true -> KnownBy;
+                false -> [NewSensor | KnownBy]
+            end,
+            io:format("[~p] ✅ Lista de quem me conhece atualizada: ~p~n", [Name, UpdatedKnownBy]),
+            loop(Name, Interval, Neighbors, UpdatedKnownBy);
+        {sensor_died, DeadSensor} ->
+            io:format("[~p] 💀 Vizinho ~p morreu, removendo da lista de vizinhos e de quem me conhece~n", [Name, DeadSensor]),
+            UpdatedNeighbors = lists:delete(DeadSensor, Neighbors),
+            UpdatedKnownBy = lists:delete(DeadSensor, KnownBy),
+            io:format("[~p] ✅ Lista de vizinhos atualizada: ~p~n", [Name, UpdatedNeighbors]),
+            io:format("[~p] ✅ Lista de quem me conhece atualizada: ~p~n", [Name, UpdatedKnownBy]),
+            loop(Name, Interval, UpdatedNeighbors, UpdatedKnownBy);
+        {notify_death_and_stop} ->
+            io:format("[~p] ⏹ Notificando vizinhos e quem me conhece que vou morrer...~n", [Name]),
+            % Notificar tanto vizinhos quanto quem me conhece
+            AllToNotify = lists:usort(Neighbors ++ KnownBy),
+            notify_neighbors_of_death(Name, AllToNotify),
+            exit(normal);
         stop ->
             io:format("[~p] ⏹ Parando sensor...~n", [Name]),
             exit(normal)
@@ -226,7 +279,7 @@ try_relay_all([], _, FailedNeighbors) ->
 try_relay_all([N|Ns], Msg, FailedNeighbors) ->
     case find_neighbor(N) of
         undefined -> 
-            io:format("⚠️ Vizinho ~p não encontrado, tentando próximo...~n", [N]),
+            io:format("⚠️ Vizinho ~p não encontrado (possivelmente morreu), tentando próximo...~n", [N]),
             try_relay_all(Ns, Msg, [N|FailedNeighbors]);
         NPid      -> 
             io:format("📤 → [~p] Enviando mensagem para relay: ~p~n", [N, Msg]),
@@ -293,7 +346,7 @@ try_relay_with_path_all([N|Ns], Msg, Path, FailedNeighbors) ->
         false ->
             case find_neighbor(N) of
                 undefined -> 
-                    io:format("⚠️ Vizinho ~p não encontrado, tentando próximo...~n", [N]),
+                    io:format("⚠️ Vizinho ~p não encontrado (possivelmente morreu), tentando próximo...~n", [N]),
                     try_relay_with_path_all(Ns, Msg, Path, [N|FailedNeighbors]);
                 NPid      -> 
                     io:format("📤 → [~p] Enviando mensagem para relay com caminho ~p: ~p~n", [N, Path, Msg]),
