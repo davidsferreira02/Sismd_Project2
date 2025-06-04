@@ -1,19 +1,16 @@
-%% sensor.erl
-%% Processo sensor que envia leituras periodicamente e faz reencaminhamento se necessário.
+
 -module(sensor).
 -export([start/2, stop/1, add_neighbor/2, remove_neighbor/2, list_neighbors/1]).
 
-% Constante para o intervalo de envio (3 segundos)
 -define(INTERVAL, 3000).
 
-% Helper function to find server on local or remote node
-% Only sensors with direct server connection (like s1) should find server directly
+
 find_server(Name, Neighbors) ->
     HasDirectServerConnection = lists:member(server, Neighbors),
     case HasDirectServerConnection of
         true ->
             case whereis(server) of
-                undefined ->                % Try to find server on the 'server' node (with 1 second timeout)
+                undefined ->                
                 case rpc:call('server@MacBook-Pro-de-David-2', erlang, whereis, [server], 1000) of
                     {badrpc, _} -> undefined;
                     undefined -> undefined;
@@ -28,9 +25,9 @@ find_server(Name, Neighbors) ->
 
 start(Name, Neighbors) ->
     process_flag(trap_exit, true),
-    Pid = spawn(fun() -> loop(Name, ?INTERVAL, Neighbors, []) end),  % Adicionar lista de quem me conhece
+    Pid = spawn(fun() -> loop(Name, ?INTERVAL, Neighbors, []) end), 
     register(Name, Pid),
-    % Try to find server only if this sensor has direct connection
+
     ServerPid = find_server(Name, Neighbors),
     
     case ServerPid of
@@ -41,10 +38,10 @@ start(Name, Neighbors) ->
             ServerPid ! {register, Pid}
     end,
     
-    % Notificar vizinhos que este sensor existe
+    
     notify_neighbors_of_birth(Name, Neighbors),
     
-    % Start the timer for periodic data sending
+   
     Pid ! start_timer,
     
     io:format("[~p] 🚀 Sensor iniciado com vizinhos: ~p (intervalo: ~pms)~n", [Name, Neighbors, ?INTERVAL]),
@@ -54,19 +51,19 @@ stop(Name) ->
     case whereis(Name) of
         undefined -> {error, not_found};
         Pid -> 
-            % Notificar vizinhos antes de parar
+            
             Pid ! {notify_death_and_stop},
             ok
     end.
 
-% Add a neighbor to an existing sensor (bidirectional)
+
 add_neighbor(SensorName, Neighbor) ->
     case whereis(SensorName) of
         undefined -> {error, sensor_not_found};
         Pid -> 
             Pid ! {add_neighbor, Neighbor},
             io:format("[~p] ➕ Adicionando vizinho: ~p~n", [SensorName, Neighbor]),
-            % Add bidirectional connection - make sure Neighbor also has SensorName as neighbor
+            
             case find_neighbor(Neighbor) of
                 undefined -> 
                     io:format("[~p] ⚠️ Não foi possível encontrar sensor ~p para adicionar conexão bidirecional~n", [SensorName, Neighbor]);
@@ -77,14 +74,14 @@ add_neighbor(SensorName, Neighbor) ->
             ok
     end.
 
-% Remove a neighbor from an existing sensor (bidirectional)
+
 remove_neighbor(SensorName, Neighbor) ->
     case whereis(SensorName) of
         undefined -> {error, sensor_not_found};
         Pid -> 
             Pid ! {remove_neighbor, Neighbor},
             io:format("[~p] ➖ Removendo vizinho: ~p~n", [SensorName, Neighbor]),
-            % Remove bidirectional connection - make sure Neighbor also removes SensorName as neighbor
+           
             case find_neighbor(Neighbor) of
                 undefined -> 
                     io:format("[~p] ⚠️ Não foi possível encontrar sensor ~p para remover conexão bidirecional~n", [SensorName, Neighbor]);
@@ -95,7 +92,6 @@ remove_neighbor(SensorName, Neighbor) ->
             ok
     end.
 
-% List current neighbors of a sensor
 list_neighbors(SensorName) ->
     case whereis(SensorName) of
         undefined -> {error, sensor_not_found};
@@ -108,7 +104,7 @@ list_neighbors(SensorName) ->
             end
     end.
 
-% Notify all neighbors that this sensor is dying
+
 notify_neighbors_of_death(Name, Neighbors) ->
     io:format("[~p] 💀 Notificando vizinhos ~p que vou morrer...~n", [Name, Neighbors]),
     lists:foreach(fun(Neighbor) ->
@@ -121,7 +117,7 @@ notify_neighbors_of_death(Name, Neighbors) ->
         end
     end, Neighbors).
 
-% Notify all neighbors that this sensor was born
+
 notify_neighbors_of_birth(Name, Neighbors) ->
     io:format("[~p] 🐣 Notificando vizinhos ~p que nasci...~n", [Name, Neighbors]),
     lists:foreach(fun(Neighbor) ->
@@ -134,11 +130,10 @@ notify_neighbors_of_birth(Name, Neighbors) ->
         end
     end, Neighbors).
 
-% Send sensor data to server or relay through neighbors
 send_sensor_data(Name, Neighbors) ->
     Val = rand:uniform(100),
     
-    % Try to find server only if this sensor has direct connection
+  
     ServerPid = find_server(Name, Neighbors),
     
     case ServerPid of
@@ -157,12 +152,12 @@ send_sensor_data(Name, Neighbors) ->
 loop(Name, Interval, Neighbors, KnownBy) ->
     receive
         start_timer ->
-            % Send first data immediately and start timer
+           
             send_sensor_data(Name, Neighbors),
             erlang:send_after(Interval, self(), send_data),
             loop(Name, Interval, Neighbors, KnownBy);
         send_data ->
-            % Send periodic data and restart timer
+            
             send_sensor_data(Name, Neighbors),
             erlang:send_after(Interval, self(), send_data),
             loop(Name, Interval, Neighbors, KnownBy);
@@ -203,14 +198,14 @@ loop(Name, Interval, Neighbors, KnownBy) ->
             end,
             loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {add_neighbor_silent, Neighbor} ->
-            % Silent addition (for bidirectional connections without logging)
+          
             UpdatedNeighbors = case lists:member(Neighbor, Neighbors) of
                 true -> Neighbors;
                 false -> [Neighbor | Neighbors]
             end,
             loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {remove_neighbor_silent, Neighbor} ->
-            % Silent removal (for bidirectional connections without logging)
+        
             UpdatedNeighbors = lists:delete(Neighbor, Neighbors),
             loop(Name, Interval, UpdatedNeighbors, KnownBy);
         {list_neighbors, From} ->
@@ -233,7 +228,7 @@ loop(Name, Interval, Neighbors, KnownBy) ->
             loop(Name, Interval, UpdatedNeighbors, UpdatedKnownBy);
         {notify_death_and_stop} ->
             io:format("[~p] ⏹ Notificando vizinhos e quem me conhece que vou morrer...~n", [Name]),
-            % Notificar tanto vizinhos quanto quem me conhece
+         
             AllToNotify = lists:usort(Neighbors ++ KnownBy),
             notify_neighbors_of_death(Name, AllToNotify),
             exit(normal);
@@ -242,12 +237,11 @@ loop(Name, Interval, Neighbors, KnownBy) ->
             exit(normal)
     end.
 
-% Find a neighbor process, checking both local and remote nodes
 find_neighbor(NeighborName) ->
-    % First try local node
+
     case whereis(NeighborName) of
         undefined ->
-            % Try to find on remote node with same name as the neighbor (with 1 second timeout)
+    
             NodeName = list_to_atom(atom_to_list(NeighborName) ++ "@MacBook-Pro-de-David-2"),
             case rpc:call(NodeName, erlang, whereis, [NeighborName], 1000) of
                 {badrpc, Reason} -> 
@@ -265,7 +259,7 @@ find_neighbor(NeighborName) ->
             LocalPid
     end.
 
-% Enhanced relay that tries all neighbors systematically
+
 try_relay(Neighbors, Msg) ->
     try_relay_all(Neighbors, Msg, []).
 
@@ -287,9 +281,8 @@ try_relay_all([N|Ns], Msg, FailedNeighbors) ->
             ok
     end.
 
-% Handle relay request with loop detection
 handle_relay(Name, Neighbors, Msg) ->
-    % Try to send to server only if this sensor has direct connection
+   
     ServerPid = find_server(Name, Neighbors),
     case ServerPid of
         undefined -> 
@@ -303,14 +296,12 @@ handle_relay(Name, Neighbors, Msg) ->
             ServerPid ! Msg
     end.
 
-% Handle relay with path tracking to avoid loops
 handle_relay_with_path(Name, Neighbors, Msg, Path) ->
-    % Check if we're in a loop
+
     case lists:member(Name, Path) of
         true ->
             io:format("[~p] 🔄 Loop detectado no caminho ~p, parando relay~n", [Name, Path]);
         false ->
-            % Try to send to server only if this sensor has direct connection
             ServerPid = find_server(Name, Neighbors),
             case ServerPid of
                 undefined -> 
@@ -326,7 +317,7 @@ handle_relay_with_path(Name, Neighbors, Msg, Path) ->
             end
     end.
 
-% Try relay with path tracking
+
 try_relay_with_path(Neighbors, Msg, Path) ->
     try_relay_with_path_all(Neighbors, Msg, Path, []).
 
@@ -338,7 +329,7 @@ try_relay_with_path_all([], _, _, FailedNeighbors) ->
             {error, no_path}
     end;
 try_relay_with_path_all([N|Ns], Msg, Path, FailedNeighbors) ->
-    % Don't send to neighbors that are already in the path (avoid loops)
+  
     case lists:member(N, Path) of
         true ->
             io:format("⚠️ Vizinho ~p já está no caminho ~p, ignorando para evitar loop~n", [N, Path]),
