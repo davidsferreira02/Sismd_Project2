@@ -106,7 +106,7 @@ list_neighbors(SensorName) ->
 
 
 notify_neighbors_of_death(Name, Neighbors) ->
-    io:format("[~p] 💀 Notificando vizinhos ~p que vou morrer...~n", [Name, Neighbors]),
+    io:format("[~p] Notificando vizinhos ~p que vou morrer...~n", [Name, Neighbors]),
     lists:foreach(fun(Neighbor) ->
         case find_neighbor(Neighbor) of
             undefined -> 
