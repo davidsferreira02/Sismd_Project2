@@ -11,7 +11,7 @@ find_server(Name, Neighbors) ->
         true ->
             case whereis(server) of
                 undefined ->                
-                case rpc:call('server@MacBook-Pro-de-David-2)', erlang, whereis, [server], 1000) of
+                case rpc:call('server@MacBook-Pro-de-David-2', erlang, whereis, [server], 1000) of
                     {badrpc, _} -> undefined;
                     undefined -> undefined;
                     RemoteServerPid -> RemoteServerPid
@@ -241,7 +241,7 @@ find_neighbor(NeighborName) ->
     case whereis(NeighborName) of
         undefined ->
     
-            NodeName = list_to_atom(atom_to_list(NeighborName) ++ "@MacBook-Pro-de-David-2)"),
+            NodeName = list_to_atom(atom_to_list(NeighborName) ++ "@MacBook-Pro-de-David-2"),
             case rpc:call(NodeName, erlang, whereis, [NeighborName], 1000) of
                 {badrpc, Reason} -> 
                     io:format("Erro RPC ao contactar nó ~p: ~p~n", [NodeName, Reason]),

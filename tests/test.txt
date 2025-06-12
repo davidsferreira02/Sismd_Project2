@@ -22,3 +22,4 @@ erl -sname c2
 
 
 sensor:stop(c1).
+sensor:start(c1, [server,c2]).
