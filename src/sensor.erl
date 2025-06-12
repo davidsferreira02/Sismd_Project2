@@ -224,7 +224,6 @@ loop(Name, Interval, Neighbors, KnownBy) ->
             UpdatedNeighbors = lists:delete(DeadSensor, Neighbors),
             UpdatedKnownBy = lists:delete(DeadSensor, KnownBy),
             io:format("[~p] ✅ Lista de vizinhos atualizada: ~p~n", [Name, UpdatedNeighbors]),
-            io:format("[~p] ✅ Lista de quem me conhece atualizada: ~p~n", [Name, UpdatedKnownBy]),
             loop(Name, Interval, UpdatedNeighbors, UpdatedKnownBy);
         {notify_death_and_stop} ->
             io:format("[~p] ⏹ Notificando vizinhos e quem me conhece que vou morrer...~n", [Name]),
